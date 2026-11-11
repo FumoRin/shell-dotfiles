@@ -1,0 +1,19 @@
+# Backups
+*.bak
+*.bak_*
+*~
+
+# Shell caches & history
+.zcompdump*
+.zsh_history
+.bash_history
+
+# Local overrides
+*.local
+*.local.*
+.zshrc.local
+aliases.local.zsh
+
+# OS metadata
+.DS_Store
+Thumbs.db
