@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  -d, --deps     Install system dependencies (zsh, git, curl, fzf) automatically"
-      echo "  -y, --yes      Non-interactive mode (assume yes to prompts)"
+      echo "  -y, --yes      Non-interactive mode (assume yes to all prompts)"
       echo "  -h, --help     Show this help message"
       exit 0
       ;;
@@ -57,25 +57,44 @@ echo -e "${C_BOLD}------------------------------------------------------------${
 echo -e "${C_BOLD}  Installing Terminal Configuration (FumoRin/shell-dotfiles)${C_RESET}"
 echo -e "${C_BOLD}------------------------------------------------------------${C_RESET}"
 
-# 1. Install System Dependencies if requested
+# Package manager installation helper
 install_package_manager_deps() {
-  info "Checking and installing package dependencies..."
+  info "Checking and installing package dependencies (zsh, git, curl, fzf)..."
   if command -v dnf &>/dev/null; then
-    sudo dnf install -y zsh git curl fzf
+    sudo dnf install -y zsh git curl fzf util-linux-user
   elif command -v apt-get &>/dev/null; then
-    sudo apt-get update && sudo apt-get install -y zsh git curl fzf
+    sudo apt-get update && sudo apt-get install -y zsh git curl fzf passwd
   elif command -v pacman &>/dev/null; then
     sudo pacman -Sy --noconfirm zsh git curl fzf
   elif command -v zypper &>/dev/null; then
     sudo zypper install -y zsh git curl fzf
   elif command -v apk &>/dev/null; then
-    sudo apk add zsh git curl fzf
+    sudo apk add zsh git curl fzf shadow
   elif command -v brew &>/dev/null; then
     brew install zsh git curl fzf
   else
     warn "Unsupported package manager. Please ensure 'zsh', 'git', 'curl', and 'fzf' are installed."
   fi
 }
+
+# 1. Check if Zsh or dependencies are missing
+if ! command -v zsh &>/dev/null || ! command -v git &>/dev/null || ! command -v curl &>/dev/null; then
+  if [ "$INSTALL_DEPS" = false ]; then
+    if [ "$AUTO_YES" = true ]; then
+      INSTALL_DEPS=true
+    else
+      echo ""
+      warn "Required dependencies (zsh/git/curl) are missing on this system."
+      read -rp "Would you like to install them now using your system package manager? [Y/n] " prompt_install
+      if [[ ! "$prompt_install" =~ ^[nN] ]]; then
+        INSTALL_DEPS=true
+      else
+        error "Zsh is required to proceed. Please install zsh or re-run with --deps."
+        exit 1
+      fi
+    fi
+  fi
+fi
 
 if [ "$INSTALL_DEPS" = true ]; then
   install_package_manager_deps
@@ -141,15 +160,66 @@ link_file "$SCRIPT_DIR/oh-my-posh" "$HOME/.poshthemes"
 link_file "$SCRIPT_DIR/oh-my-posh" "$HOME/.config/oh-my-posh"
 link_file "$SCRIPT_DIR/zsh/completions" "$HOME/.config/autocomplete/zsh"
 
-# 6. Check default shell
-CURRENT_SHELL="$(basename "$SHELL")"
-if [ "$CURRENT_SHELL" != "zsh" ]; then
-  ZSH_PATH="$(which zsh 2>/dev/null || true)"
-  if [ -n "$ZSH_PATH" ]; then
-    info "Default shell is currently $CURRENT_SHELL. To switch to Zsh, run:"
-    echo -e "    ${C_BOLD}chsh -s $ZSH_PATH${C_RESET}"
+# 6. Configure Zsh as Default Shell
+configure_default_shell() {
+  local zsh_bin
+  zsh_bin="$(command -v zsh 2>/dev/null || true)"
+
+  if [ -z "$zsh_bin" ]; then
+    warn "Zsh binary not found. Skipping default shell configuration."
+    return 0
   fi
-fi
+
+  # Check if current shell is already zsh
+  if [[ "$SHELL" == *"/zsh" ]]; then
+    success "Zsh is already configured as your default shell ($SHELL)."
+    return 0
+  fi
+
+  info "Current default shell is: $SHELL"
+
+  # Ensure zsh is listed in /etc/shells
+  if [ -f /etc/shells ] && ! grep -q "^${zsh_bin}$" /etc/shells; then
+    info "Adding $zsh_bin to /etc/shells..."
+    if command -v sudo &>/dev/null; then
+      echo "$zsh_bin" | sudo tee -a /etc/shells >/dev/null
+    else
+      echo "$zsh_bin" >> /etc/shells 2>/dev/null || true
+    fi
+  fi
+
+  # Prompt or auto-set default shell
+  local set_default=false
+  if [ "$AUTO_YES" = true ]; then
+    set_default=true
+  else
+    echo ""
+    read -rp "Would you like to set Zsh ($zsh_bin) as your default shell? [Y/n] " prompt_sh
+    if [[ ! "$prompt_sh" =~ ^[nN] ]]; then
+      set_default=true
+    fi
+  fi
+
+  if [ "$set_default" = true ]; then
+    info "Setting Zsh as default shell..."
+    local changed=false
+
+    if command -v chsh &>/dev/null; then
+      chsh -s "$zsh_bin" && changed=true || true
+    elif command -v usermod &>/dev/null && command -v sudo &>/dev/null; then
+      sudo usermod -s "$zsh_bin" "$USER" && changed=true || true
+    fi
+
+    if [ "$changed" = true ]; then
+      success "Default shell changed to $zsh_bin."
+    else
+      warn "Could not change default shell automatically (requires password or permissions)."
+      echo -e "To change it manually, run: ${C_BOLD}chsh -s $zsh_bin${C_RESET}"
+    fi
+  fi
+}
+
+configure_default_shell
 
 echo -e "\n${C_GREEN}${C_BOLD}Setup completed successfully!${C_RESET}"
-echo -e "Start a new shell or run: ${C_BOLD}exec zsh${C_RESET}"
+echo -e "To start using your new environment, run: ${C_BOLD}exec zsh${C_RESET}"
